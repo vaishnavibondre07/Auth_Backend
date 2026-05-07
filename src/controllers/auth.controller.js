@@ -4,6 +4,32 @@ import config from "../config/config.js";
 import jwt from "jsonwebtoken";
 import Session from "../models/session.model.js";
 
+const createSession = async (userId, req) => {
+    const session = await Session.create({
+        user : userId,
+        refreshToken : " ",
+        ip : req.ip,
+        userAgent : req.headers["user-agent"]
+      })
+
+      const refreshToken = jwt.sign({
+        id : userId,
+        sessionId : session._id
+     }, config.JWT_SECRET, {expiresIn : "7d"});
+
+      const hashedRefreshToken = await bcrypt.hash(refreshToken, 10); 
+      session.refreshToken = hashedRefreshToken;
+      await session.save();
+      return refreshToken;
+}
+function generateAccessToken(userId, sessionId){
+    return jwt.sign({
+        id : userId,
+        sessionId : sessionId
+    }, config.JWT_SECRET, {expiresIn : "1m"});
+}
+
+
 export async function registerUser(req,res){
 
         const {username,email,password} = req.body;
@@ -40,28 +66,8 @@ export async function registerUser(req,res){
         password : hashedPassword
      })
 
-     const session = await Session.create({
-        user : user._id,
-        refreshToken : " ",
-        ip : req.ip,
-        userAgent : req.headers["user-agent"]
-      })
-
-      const refreshToken = jwt.sign({
-        id : user._id,
-        sessionId : session._id
-     }, config.JWT_SECRET, {expiresIn : "7d"});
-
-     const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
-
-     session.refreshToken = hashedRefreshToken;
-     await session.save();
-
-     const accesstoken = jwt.sign({
-        id : user._id,
-        sessionId : session._id
-     }, config.JWT_SECRET, {expiresIn : "1m"});
-
+    const refreshToken = await createSession(user._id, req);
+    const accessToken = generateAccessToken(user._id, refreshToken.sessionId);
     
       res.cookie("refreshToken", refreshToken, {
         httpOnly: true,
@@ -77,7 +83,7 @@ export async function registerUser(req,res){
           username: user.username,
           email: user.email
         },
-        token: accesstoken,
+        token: accessToken,
       });
 
 
@@ -114,26 +120,9 @@ export async function loginUser(req, res) {
       });
     }
 
-    const session = await Session.create({
-        user : user._id,
-        refreshToken : " ",
-        ip : req.ip,
-        userAgent : req.headers["user-agent"]
-      })
+    const refreshToken = await createSession(user._id, req);
+    const accessToken = generateAccessToken(user._id, refreshToken.sessionId);
 
-    const refreshToken = jwt.sign({
-        id : user._id,
-        sessionId : session._id
-     }, config.JWT_SECRET, {expiresIn : "7d"});
-
-    const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
-    session.refreshToken = hashedRefreshToken;
-    await session.save();
-
-    const accessToken = jwt.sign({
-        id : user._id,
-        sessionId : session._id
-    }, config.JWT_SECRET, {expiresIn : "1m"});
 
     res.cookie("refreshToken", refreshToken, {
       httpOnly: true,
@@ -190,10 +179,14 @@ export async function refreshToken(req, res){
 
     const user = await User.findById(decode.id);
 
-     const accessToken = jwt.sign({
-        id : user._id,
-        sessionId : session._id
-      }, config.JWT_SECRET, {expiresIn : "1m"});
+    if(!user){
+        return res.status(401).json({
+          success : false,
+          message : "User not found"
+        })
+      }
+
+    const accessToken = generateAccessToken(user._id, session._id);
 
     res.status(200).json({
       success : true,
@@ -247,3 +240,31 @@ export async function logoutUser(req,res){
     });
 
 }
+
+// ******************************************* Logout All *************************************************
+
+export async function logoutAll(req, res){
+
+  const refreshToken = req.cookies.refreshToken;
+
+  if(!refreshToken){
+    return res.status(401).json({
+      success : false,
+      message : "Refresh token not found"
+     })
+
+  }
+
+
+    const decode = jwt.verify(refreshToken, config.JWT_SECRET);
+
+    const sessions = await Session.updateMany({user : decode.id, revoked : false}, {revoked : true});
+
+    res.clearCookie("refreshToken");
+
+    return res.status(200).json({
+      success : true,
+      message : "Logged out from all devices successfully"
+     })
+}
+
