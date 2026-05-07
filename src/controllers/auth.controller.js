@@ -114,6 +114,34 @@ export async function loginUser(req, res) {
       });
     }
 
+    const session = await Session.create({
+        user : user._id,
+        refreshToken : " ",
+        ip : req.ip,
+        userAgent : req.headers["user-agent"]
+      })
+
+    const refreshToken = jwt.sign({
+        id : user._id,
+        sessionId : session._id
+     }, config.JWT_SECRET, {expiresIn : "7d"});
+
+    const hashedRefreshToken = await bcrypt.hash(refreshToken, 10);
+    session.refreshToken = hashedRefreshToken;
+    await session.save();
+
+    const accessToken = jwt.sign({
+        id : user._id,
+        sessionId : session._id
+    }, config.JWT_SECRET, {expiresIn : "1m"});
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax", 
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
     return res.status(200).json({
       success: true,
       message: "Login successful",
@@ -121,6 +149,7 @@ export async function loginUser(req, res) {
         username: user.username,
         email: user.email,
       },
+      token: accessToken,
     });
 
   } catch (error) {
