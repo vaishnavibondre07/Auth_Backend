@@ -20,13 +20,18 @@ const createSession = async (userId, req) => {
       const hashedRefreshToken = await bcrypt.hash(refreshToken, 10); 
       session.refreshToken = hashedRefreshToken;
       await session.save();
-      return refreshToken;
+
+      return {
+        refreshToken,
+        sessionId : session._id
+    };
 }
+
 function generateAccessToken(userId, sessionId){
     return jwt.sign({
         id : userId,
         sessionId : sessionId
-    }, config.JWT_SECRET, {expiresIn : "1m"});
+    }, config.JWT_SECRET, {expiresIn : "15m"});
 }
 
 
@@ -66,10 +71,18 @@ export async function registerUser(req,res){
         password : hashedPassword
      })
 
-    const refreshToken = await createSession(user._id, req);
-    const accessToken = generateAccessToken(user._id, refreshToken.sessionId);
+    const sessionData = await createSession(user._id, req);
+    const accessToken = generateAccessToken(user._id, sessionData.sessionId);
+
+      
+      res.cookie("accessToken", accessToken, {
+        httpOnly: true,
+        secure: false,
+        sameSite: "lax",
+        maxAge: 1 * 60 * 1000, // 1 minute
+      })
     
-      res.cookie("refreshToken", refreshToken, {
+      res.cookie("refreshToken", sessionData.refreshToken, {
         httpOnly: true,
         secure: false,
         sameSite: "lax", 
@@ -120,15 +133,22 @@ export async function loginUser(req, res) {
       });
     }
 
-    const refreshToken = await createSession(user._id, req);
-    const accessToken = generateAccessToken(user._id, refreshToken.sessionId);
+    const sessionData = await createSession(user._id, req);
+    const accessToken = generateAccessToken(user._id, sessionData.sessionId);
 
 
-    res.cookie("refreshToken", refreshToken, {
+    res.cookie("refreshToken", sessionData.refreshToken, {
       httpOnly: true,
       secure: false,
       sameSite: "lax", 
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    res.cookie("accessToken", accessToken, {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+      maxAge: 15 * 60 * 1000, // 15 minutes
     });
 
     return res.status(200).json({
@@ -158,6 +178,7 @@ export async function refreshToken(req, res){
   try {
 
     const refreshToken = req.cookies.refreshToken;
+    // const refreshToken = req.body
 
     if(!refreshToken){
       return res.status(401).json({
