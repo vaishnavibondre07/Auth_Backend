@@ -14,6 +14,12 @@ if(!process.env.GOOGLE_CLIENT_ID){
     throw new Error("GOOGLE_CLIENT_ID is not defined in .env file");
 }
 
+if(!process.env.GOOGLE_CLIENT_SECRET){
+    throw new Error("GOOGLE_CLIENT_SECRET is not defined in .env file");
+}
+
+// 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
+
 const config = {
     MONGO_URI: process.env.MONGO_URI,
     JWT_SECRET: process.env.JWT_SECRET,

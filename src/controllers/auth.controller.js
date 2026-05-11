@@ -3,6 +3,8 @@ import bcrypt from "bcrypt";
 import config from "../config/config.js";
 import jwt from "jsonwebtoken";
 import Session from "../models/session.model.js";
+import { googleClient } from "../config/googleClient.js";
+
 
 const createSession = async (userId, req) => {
     const session = await Session.create({

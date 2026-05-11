@@ -14,9 +14,17 @@ const userSchema = mongoose.Schema({
         unique: [true, "Email must be unique"]
     },
 
-    password : {
+    password: {
+      type: String,
+
+      required: function () {
+        return !this.googleId;
+     }
+    },
+
+     googleId : {
         type: String,
-        required: [true, "Password is required"]
+        default: null
     },
 
     failedAttempts : {
