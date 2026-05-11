@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { registerUser, loginUser, refreshToken, logoutUser, logoutAll } from "../controllers/auth.controller.js";
+import { registerUser, loginUser, refreshToken, logoutUser, logoutAll, googleLogin } from "../controllers/auth.controller.js";
 
 const authRouter = Router();
 
@@ -8,5 +8,6 @@ authRouter.post("/login", loginUser);
 authRouter.get("/refresh-token", refreshToken);
 authRouter.post("/logout", logoutUser);
 authRouter.post("/logout-all", logoutAll);
+authRouter.post("/google-login", googleLogin);
 
 export default authRouter;

@@ -106,6 +106,7 @@ export async function registerUser(req,res){
 
 export async function loginUser(req, res) {
   try {
+
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -124,31 +125,82 @@ export async function loginUser(req, res) {
       });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    // Unlock account automatically after lock expires
+    if (user.lockUntil && user.lockUntil < Date.now()) {
+      user.lockUntil = null;
+      user.failedAttempts = 0;
+      await user.save();
+    }
 
-    if (!isMatch) {
+    // Check if account is locked
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+
+      const remainingTime = Math.ceil(
+        (user.lockUntil - Date.now()) / 1000
+      );
+
       return res.status(400).json({
         success: false,
-        message: "Invalid email or password",
+        message: `Account is locked. Try again in ${remainingTime} seconds`,
       });
     }
 
-    const sessionData = await createSession(user._id, req);
-    const accessToken = generateAccessToken(user._id, sessionData.sessionId);
+    const isMatch = await bcrypt.compare(password, user.password);
 
+    // Wrong password
+    if (!isMatch) {
+
+      user.failedAttempts += 1;
+
+      const remainingAttempts = 5 - user.failedAttempts;
+
+      // Lock account after 5 attempts
+      if (user.failedAttempts >= 5) {
+
+        user.lockUntil = Date.now() + 1 * 60 * 1000; // 1 minute
+        user.failedAttempts = 0;
+
+        await user.save();
+
+        return res.status(400).json({
+          success: false,
+          message: "Account locked for 1 minute due to too many failed attempts",
+        });
+      }
+
+      await user.save();
+
+      return res.status(400).json({
+        success: false,
+        message: `Invalid email or password. ${remainingAttempts} attempts remaining`,
+      });
+    }
+
+    // Successful login
+    // user.failedAttempts = 0;
+    // user.lockUntil = null;
+
+    // await user.save();
+
+    const sessionData = await createSession(user._id, req);
+
+    const accessToken = generateAccessToken(
+      user._id,
+      sessionData.sessionId
+    );
 
     res.cookie("refreshToken", sessionData.refreshToken, {
       httpOnly: true,
       secure: false,
-      sameSite: "lax", 
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
     res.cookie("accessToken", accessToken, {
       httpOnly: true,
       secure: false,
       sameSite: "lax",
-      maxAge: 15 * 60 * 1000, // 15 minutes
+      maxAge: 15 * 60 * 1000,
     });
 
     return res.status(200).json({
@@ -162,6 +214,7 @@ export async function loginUser(req, res) {
     });
 
   } catch (error) {
+
     console.log(error);
 
     return res.status(500).json({
@@ -170,8 +223,6 @@ export async function loginUser(req, res) {
     });
   }
 }
-
-
 // ********************************************* REFRESH TOKEN ***************************************************
 
 export async function refreshToken(req, res){
@@ -288,4 +339,76 @@ export async function logoutAll(req, res){
       message : "Logged out from all devices successfully"
      })
 }
+
+export async function googleLogin(req, res){
+  try {
+    const { token } = req.body;
+
+    if(!token){
+      return res.status(400).json({
+        success : false,
+        message : "Google token is required"
+       })
+    }
+
+  const ticket = await googleClient.verifyIdToken({
+    idToken : token,
+    audience : config.GOOGLE_CLIENT_ID,
+  });
+
+  const payload = ticket.getPayload();
+
+  const email = payload.email;
+  const name = payload.name;
+  const googleId = payload.sub;
+
+  let user = await User.findOne({email});
+
+  if(!user){
+    user = await User.create({
+      username : name,
+      email,
+      googleId,
+      password: null
+    });
+  }
+
+  const sessionData = await createSession(user._id, req);
+
+  const accessToken = generateAccessToken(user._id, sessionData.sessionId);
+
+  res.cookie("refreshToken", sessionData.refreshToken, {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+
+  res.cookie("accessToken", accessToken, {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    maxAge: 15 * 60 * 1000,
+  });
+
+  return res.status(200).json({
+    success : true,
+    message : "Login with Google successful",
+    data : {
+      username : user.username,
+      email : user.email
+    },
+    token : accessToken
+  });
+
+} catch (error) {
+    console.log(error);
+    return res.status(500).json({
+      success : false,
+      message : "Internal server error"
+     })
+  }
+
+}
+
 

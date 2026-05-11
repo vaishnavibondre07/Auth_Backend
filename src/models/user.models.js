@@ -17,6 +17,16 @@ const userSchema = mongoose.Schema({
     password : {
         type: String,
         required: [true, "Password is required"]
+    },
+
+    failedAttempts : {
+        type: Number,
+        default: 0
+    },
+
+    lockUntil : {
+        type: Date,
+        default: null
     }
 
 })
