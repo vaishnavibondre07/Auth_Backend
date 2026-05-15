@@ -27,7 +27,12 @@ const otpSchema = new mongoose.Schema({
         required: [ true, "Expiration time is required" ]
     },
 
-    blockedUntil : Date
+    blockedUntil : Date,
+
+    lastOtpSentAt : {
+        type: Date,
+        default: Date.now
+    }
 
 }, {
     timestamps: true
