@@ -15,8 +15,20 @@ const otpSchema = new mongoose.Schema({
     otpHash: {
         type: String,
         required: [ true, "OTP hash is required" ]
-    }
-    
+    },
+
+    resendCount : {
+        type: Number,
+        default: 0
+    },
+
+    expiresAt : {
+        type: Date,
+        required: [ true, "Expiration time is required" ]
+    },
+
+    blockedUntil : Date
+
 }, {
     timestamps: true
 })

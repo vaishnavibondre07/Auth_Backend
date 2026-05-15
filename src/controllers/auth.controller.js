@@ -87,7 +87,8 @@ export async function registerUser(req, res) {
     await otpModel.create({
         email,
         user: user._id,
-        otpHash
+        otpHash,
+        expiresAt: new Date(Date.now() + 30 * 1000)
     });
 
 
@@ -418,61 +419,308 @@ export async function googleLogin(req, res){
 
 // ******************************************* Verify Email *************************************************
 
-export async function verifyEmail(req, res) {
-    const { email, otp } = req.body;
+// export async function verifyEmail(req, res) {
 
-    const otpDoc = await otpModel.findOne({ email });
+//   try {
 
-    if (!otpDoc) {
-        return res.status(400).json({ message: "Invalid OTP" });
-    }
+//     const { email, otp } = req.body;
 
-    const isMatch = await bcrypt.compare(otp, otpDoc.otpHash);
+//     const otpDoc = await otpModel.findOne({ email });
 
-    if (!isMatch) {
-        return res.status(400).json({ message: "Invalid OTP" });
-    }
+//     if (!otpDoc) {
+//         return res.status(400).json({ message: "Invalid OTP" });
+//     }
 
-    const user = await userModel.findByIdAndUpdate(
-        otpDoc.user,
-        { verified: true },
-        { returnDocument: "after" }
-    );
+//     if (otpDoc.expiresAt < new Date()) {
 
-    if (!user) {
-        return res.status(400).json({ message: "User not found" });
-    }
+//       await otpModel.deleteMany({email});
+//         return res.status(400).json({
+//                message: "OTP expired"
+//       });
+//    }
 
-    await otpModel.deleteMany({ user: otpDoc.user });
+//     const isMatch = await bcrypt.compare(otp, otpDoc.otpHash);
 
-    const accessToken = generateAccessToken(user._id);
+//     if (!isMatch) {
+//         return res.status(400).json({ message: "Invalid OTP" });
+//     }
 
-    const sessionData = await createSession(user._id, req);
-    const refreshToken = sessionData.refreshToken;
+//     const user = await userModel.findByIdAndUpdate(
+//         otpDoc.user,
+//         { verified: true },
+//         { returnDocument: "after" }
+//     );
 
-    res.cookie("refreshToken", refreshToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+//     if (!user) {
+//         return res.status(400).json({ message: "User not found" });
+//     }
 
-    res.cookie("accessToken", accessToken, {
-        httpOnly: true,
-        secure: false,
-        sameSite: "lax",
-        maxAge: 15 * 60 * 1000,
-    });
+//     await otpModel.deleteMany({ user: otpDoc.user });
 
-    return res.status(200).json({
-        message: "Email verified successfully",
-        accessToken,
-        refreshToken,
-        user: {
-            username: user.username,
-            email: user.email,
-            verified: user.verified
+//     const accessToken = generateAccessToken(user._id);
+
+//     const sessionData = await createSession(user._id, req);
+//     const refreshToken = sessionData.refreshToken;
+
+//     res.cookie("refreshToken", refreshToken, {
+//         httpOnly: true,
+//         secure: false,
+//         sameSite: "lax",
+//         maxAge: 7 * 24 * 60 * 60 * 1000,
+//     });
+
+//     res.cookie("accessToken", accessToken, {
+//         httpOnly: true,
+//         secure: false,
+//         sameSite: "lax",
+//         maxAge: 15 * 60 * 1000,
+//     });
+
+//     return res.status(200).json({
+//         message: "Email verified successfully",
+//         accessToken,
+//         refreshToken,
+//         user: {
+//             username: user.username,
+//             email: user.email,
+//             verified: user.verified
+//         }
+//     });
+//   } catch (error) {
+//     console.log(error);
+//     return res.status(500).json({
+//         message: "Internal Server Error"
+//     });
+//   }
+// }
+
+   export async function verifyEmail(req, res) {
+
+    try {
+
+        const { email, otp } = req.body;
+
+        const otpDoc = await otpModel.findOne({ email });
+
+        if (!otpDoc) {
+            return res.status(400).json({
+                message: "Invalid OTP"
+            });
         }
-    });
+
+        // BLOCK CHECK
+        if (
+            otpDoc.blockedUntil &&
+            otpDoc.blockedUntil > new Date()
+        ) {
+
+            const remainingTime = Math.ceil(
+                (otpDoc.blockedUntil - new Date()) / 1000
+            );
+
+            return res.status(429).json({
+                message:
+                    `Too many wrong attempts. Try again after ${remainingTime} sec`
+            });
+        }
+
+        // OTP EXPIRY CHECK
+        if (otpDoc.expiresAt < new Date()) {
+
+            await otpModel.deleteMany({ email });
+
+            return res.status(400).json({
+                message: "OTP expired"
+            });
+        }
+
+        // COMPARE OTP
+        const isMatch = await bcrypt.compare(
+            otp,
+            otpDoc.otpHash
+        );
+
+        // WRONG OTP
+        if (!isMatch) {
+
+            otpDoc.verifyAttempts += 1;
+
+            // BLOCK AFTER 5 ATTEMPTS
+            if (otpDoc.verifyAttempts >= 5) {
+
+                otpDoc.blockedUntil =
+                    new Date(Date.now() + 2 * 60 * 1000);
+
+                await otpDoc.save();
+
+                return res.status(429).json({
+                    message:
+                        "Too many wrong OTP attempts. Blocked for 2 mins"
+                });
+            }
+
+            await otpDoc.save();
+
+            return res.status(400).json({
+                message: "Invalid OTP"
+            });
+        }
+
+        // RESET OR DELETE OTP
+        await otpModel.deleteMany({
+            user: otpDoc.user
+        });
+
+        // VERIFY USER
+        const user = await userModel.findByIdAndUpdate(
+            otpDoc.user,
+            { verified: true },
+            { returnDocument: "after" }
+        );
+
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
+
+        // TOKENS
+        const accessToken =
+            generateAccessToken(user._id);
+
+        const sessionData =
+            await createSession(user._id, req);
+
+        const refreshToken =
+            sessionData.refreshToken;
+
+        // COOKIES
+        res.cookie("refreshToken", refreshToken, {
+            httpOnly: true,
+            secure: false,
+            sameSite: "lax",
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+        });
+
+        res.cookie("accessToken", accessToken, {
+            httpOnly: true,
+            secure: false,
+            sameSite: "lax",
+            maxAge: 15 * 60 * 1000,
+        });
+
+        return res.status(200).json({
+            message: "Email verified successfully",
+
+            accessToken,
+            refreshToken,
+
+            user: {
+                username: user.username,
+                email: user.email,
+                verified: user.verified
+            }
+        });
+
+    } catch (error) {
+
+        console.log(error);
+
+        return res.status(500).json({
+            message: "Internal Server Error"
+        });
+
+    }
+
 }
 
+// ******************************************* Resend OTP *************************************************
+
+export const resendOtp = async (req, res) => {
+
+   try {
+
+      const { email } = req.body;
+
+      // FIND OTP DATA
+      const otpData = await otpModel.findOne({ email });
+
+      if (!otpData) {
+         return res.status(404).json({
+            success: false,
+            message: "OTP data not found"
+         });
+      }
+
+      // CHECK IF BLOCKED
+      if (
+         otpData.blockedUntil &&
+         otpData.blockedUntil > new Date()
+      ) {
+
+         const remainingTime = Math.ceil(
+            (otpData.blockedUntil - new Date()) / 1000
+         );
+
+         return res.status(429).json({
+            success: false,
+            message: `Too many attempts. Try again after ${remainingTime} sec`
+         });
+      }
+
+      // CHECK RESEND LIMIT
+      if (otpData.resendCount >= 5) {
+
+         otpData.blockedUntil =
+            new Date(Date.now() + 2 * 60 * 1000);
+
+         await otpData.save();
+
+         return res.status(429).json({
+            success: false,
+            message: "Too many resend attempts. Account blocked for 2 minutes"
+         });
+      }
+
+      // GENERATE NEW OTP
+      const otp = generateOTP();
+
+      // HASH OTP
+      const hashedOtp = await bcrypt.hash(otp, 10);
+
+      // UPDATE OTP DATA
+      otpData.otpHash = hashedOtp;
+
+      // OTP VALID FOR 30 SEC
+      otpData.expiresAt =
+         new Date(Date.now() + 30 * 1000);
+
+      // INCREASE RESEND COUNT
+      otpData.resendCount += 1;
+
+      await otpData.save();
+
+      // SEND EMAIL
+      await sendEmail(
+         email,
+         "Resend OTP",
+         generateOTPHtml(otp)
+      );
+
+      return res.status(200).json({
+         success: true,
+         message: "OTP resent successfully"
+      });
+
+   } catch (error) {
+
+      console.log(error);
+
+      return res.status(500).json({
+         success: false,
+         message: "Internal Server Error"
+      });
+
+   }
+
+};
