@@ -183,6 +183,13 @@ export async function loginUser(req, res) {
 
     // await user.save();
 
+    if (!user.verified) {
+      return res.status(400).json({
+        success: false,
+        message: "Please verify your email before logging in",
+      });
+    }
+
     const sessionData = await createSession(user._id, req);
 
     const accessToken = generateAccessToken(
